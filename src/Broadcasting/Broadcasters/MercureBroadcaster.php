@@ -1,10 +1,11 @@
-<?php declare(strict_types = 1);
+<?php declare(strict_types=1);
 
 namespace Duijker\LaravelMercureBroadcaster\Broadcasting\Broadcasters;
 
 use Illuminate\Broadcasting\Channel;
 use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\Broadcaster;
+use Illuminate\Support\Stringable;
 use Symfony\Component\Mercure\HubInterface;
 use Symfony\Component\Mercure\Update;
 
@@ -43,6 +44,29 @@ class MercureBroadcaster implements Broadcaster
     }
 
     /**
+     * Topic name from broadcastAs or channel name instead.
+     *
+     * @param  string $event
+     * @param  string|Channel $channel
+     * @return string
+     */
+    public function topic($event, string|Channel $channel): string
+    {
+        throw_unless(
+            is_scalar($event),
+            'TypeError',
+            'broadcastAs() should return a scalar value.'
+        );
+
+        return str($event)
+            ->whenContains(
+                "\\", # channel name used when event namespace given "no broadcastAs() implemented"
+                fn(Stringable $event) => $event->substrReplace($channel)
+            )->toString();
+    }
+
+
+    /**
      * Broadcast the given event.
      *
      * @param  array $channels
@@ -50,21 +74,18 @@ class MercureBroadcaster implements Broadcaster
      * @param  array $payload
      * @return void
      */
-    public function broadcast(array $channels, $event, array $payload = [])
+    public function broadcast(array $channels, $event, mixed $payload = [])
     {
-        $payload = json_encode([
-            'event' => $event,
-            'data' => $payload,
-        ]);
+        $data = collect($payload)
+            ->forget(['socket', 'event'])
+            ->toJson();
 
         foreach ($channels as $channel) {
-            if (!$channel instanceof Channel) {
-                // this will be deprecated
-                $this->hub->publish(new Update($channel->name, $payload, $channel->private));
-                continue;
-            }
-
-            $this->hub->publish(new Update($channel->__toString(), $payload, $channel instanceof PrivateChannel));
+            $this->hub->publish(new Update(
+                $this->topic($event, $channel),
+                $data,
+                $channel instanceof PrivateChannel
+            ));
         }
     }
 }
